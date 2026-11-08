@@ -1,5 +1,5 @@
 // Mantém o app abrindo sem internet. Atualizações entram na abertura seguinte.
-const CACHE = 'inspecao-lp-v2';
+const CACHE = 'inspecao-lp-v3';
 const ARQUIVOS = [
   './',
   './index.html',
@@ -12,6 +12,8 @@ const ARQUIVOS = [
   './js/db.js',
   './js/fotos.js',
   './js/icones.js',
+  './js/pdf.js',
+  './js/relatorio-pdf.js',
   './js/relatorio.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
@@ -23,7 +25,7 @@ self.addEventListener('install', (evento) => {
   evento.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(ARQUIVOS))
+      .then((cache) => cache.addAll(ARQUIVOS.map((url) => new Request(url, { cache: 'reload' }))))
       .then(() => self.skipWaiting()),
   );
 });

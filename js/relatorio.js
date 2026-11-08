@@ -16,6 +16,13 @@ export function dataCurta(iso) {
   return formatoDia.format(new Date(ano, mes - 1, dia));
 }
 
+const formatoData = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+export function dataCompleta(iso) {
+  const [ano, mes, dia] = iso.split('-').map(Number);
+  return formatoData.format(new Date(ano, mes - 1, dia));
+}
+
 export function semAcento(texto) {
   return texto.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 }
@@ -64,19 +71,12 @@ export function montarRelatorio(turno, itens) {
   return [cabecalho(turno), '', ...linhas].join('\n');
 }
 
-export function legendaFoto(turno, item) {
-  const status = textoStatus(item);
-  const linha2 = [rotuloEtapa(item), status, dataCurta(turno.data)].filter(Boolean).join(' · ');
-  return [`${textoOf(item)} · ${descricaoPeca(item)}`, linha2];
-}
-
-export function nomeArquivoFoto(numero, item) {
-  const partes = [textoOf(item), item.peca].join(' ');
-  const limpo = semAcento(partes)
+export function nomeArquivoPdf(turno) {
+  const limpo = semAcento(['relatorio', turno.cliente, turno.data].filter(Boolean).join(' '))
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
-    .slice(0, 60);
-  return `${String(numero).padStart(2, '0')}-${limpo}.jpg`;
+    .slice(0, 80);
+  return `${limpo}.pdf`;
 }
 
 // Atalho oferecido no card, conforme o que costuma vir depois nas anotações.
@@ -99,6 +99,32 @@ export function dadosProximaAcao(item, acao, hora) {
     return { ...base, tipo: 'LPF', penetracao: true, revelador: false, reinspecao: false, qtd };
   }
   return { ...base, tipo: item.tipo, penetracao: item.penetracao, revelador: item.revelador, reinspecao: true, qtd: pendentes || item.qtd };
+}
+
+// Tempo de espera com o penetrante antes de revelar.
+export const MINUTOS_PENETRANTE = { LP: 10, LPF: 180 };
+
+// A contagem só vale enquanto a linha é só de penetrante e ainda não tem resultado.
+export function fimDoPenetrante(item) {
+  if (!item.penetranteEm || !item.penetracao || item.revelador || item.status) return null;
+  return item.penetranteEm + MINUTOS_PENETRANTE[item.tipo] * 60000;
+}
+
+export function textoTempoRestante(ms) {
+  const total = Math.ceil(ms / 1000);
+  const horas = Math.floor(total / 3600);
+  const minutos = Math.floor((total % 3600) / 60);
+  const dois = (n) => String(n).padStart(2, '0');
+  return horas ? `${horas}:${dois(minutos)}:${dois(total % 60)}` : `${dois(minutos)}:${dois(total % 60)}`;
+}
+
+// Hora digitada no futuro é do dia anterior: o turno atravessa a meia-noite.
+export function momentoDaHora(hora, agora = Date.now()) {
+  const [horas, minutos] = hora.split(':').map(Number);
+  const data = new Date(agora);
+  data.setHours(horas, minutos, 0, 0);
+  if (data.getTime() > agora + 60000) data.setDate(data.getDate() - 1);
+  return data.getTime();
 }
 
 // Digitar 1234501 vira 12345-01. Aceita letra no final, como 12345-01B.

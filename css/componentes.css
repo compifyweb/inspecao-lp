@@ -452,6 +452,34 @@
     font-size: var(--text-caption-size);
     line-height: var(--text-caption-lineHeight);
   }
+  /* Cronômetro do penetrante */
+  .cronometro {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--control-md);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-base);
+    background: var(--bgColor-info-subtle);
+    color: var(--fgColor-info);
+    font-size: var(--text-label-size);
+    line-height: var(--text-caption-lineHeight);
+    font-weight: var(--text-label-weight);
+  }
+  .cronometro-tempo {
+    margin-left: auto;
+    white-space: nowrap;
+    font-size: var(--text-title-size);
+    line-height: var(--text-label-lineHeight);
+    font-weight: var(--text-label-weight);
+  }
+  .cronometro[data-estado="pronto"] {
+    background: var(--bgColor-success);
+    color: var(--fgColor-success);
+  }
+  .cronometro[data-estado="pronto"] .cronometro-tempo {
+    font-size: var(--text-label-size);
+  }
   .card-sobre {
     position: relative;
     z-index: var(--z-raised);

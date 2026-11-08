@@ -1,22 +1,25 @@
 import * as db from './db.js';
 import {
   STATUS,
+  MINUTOS_PENETRANTE,
   cabecalho,
   dataCurta,
   dadosProximaAcao,
   descricaoPeca,
+  fimDoPenetrante,
   formatarOf,
-  legendaFoto,
   linhaItem,
+  momentoDaHora,
   montarRelatorio,
-  nomeArquivoFoto,
   proximaAcao,
   rotuloEtapa,
   semAcento,
   textoOf,
   textoStatus,
+  textoTempoRestante,
 } from './relatorio.js';
-import { carimbarFoto, processarFoto } from './fotos.js';
+import { processarFoto } from './fotos.js';
+import { gerarRelatorioPdf, lerCoresDoTema } from './relatorio-pdf.js';
 import { icone } from './icones.js';
 
 const $ = (id) => document.getElementById(id);
@@ -29,8 +32,6 @@ const dialogo = $('dialogo');
 const inputCamera = $('foto-camera');
 const inputGaleria = $('foto-galeria');
 
-// Limite prudente por compartilhamento. Se o celular aceitar mais, basta aumentar aqui.
-const FOTOS_POR_ENVIO = 10;
 const HORAS_PARA_AVISAR_TURNO = 16;
 const CHAVE_RASCUNHO = 'inspecao-lp:rascunho';
 const MINIATURAS_NO_CARD = 4;
@@ -47,6 +48,9 @@ const MENSAGEM_ESPACO = 'Sem espaço para guardar a foto. Exclua turnos antigos 
 
 const regrasPlural = new Intl.PluralRules('pt-BR');
 const formatoLista = new Intl.ListFormat('pt-BR', { style: 'long', type: 'conjunction' });
+const formatoMb = new Intl.NumberFormat('pt-BR', { style: 'unit', unit: 'megabyte', maximumFractionDigits: 1 });
+const formatoMinutos = new Intl.NumberFormat('pt-BR', { style: 'unit', unit: 'minute', unitDisplay: 'short' });
+const formatoHoras = new Intl.NumberFormat('pt-BR', { style: 'unit', unit: 'hour', unitDisplay: 'short' });
 const plural = (n, um, varios) => `${n} ${regrasPlural.select(n) === 'one' ? um : varios}`;
 const capitalizar = (texto) => texto.charAt(0).toUpperCase() + texto.slice(1);
 
@@ -78,12 +82,12 @@ let formBase = '';
 let formHash = '';
 let sugestoes = { pecas: [], ofs: [] };
 let alvoFoto = null;
-let preparo = null;
 let relatorioAberto = null;
 let turnoEmEdicao = null;
 let pedidoInstalacao = null;
 let timerToast;
 const processando = new Map();
+const cronometros = new Map();
 const errosFoto = new Map();
 const urlsMiniatura = new Map();
 
@@ -134,6 +138,7 @@ async function rotear() {
     if (achou) {
       try {
         await tela(...achou.slice(1));
+        carregarCronometros();
       } catch (erro) {
         console.error(erro);
         if (versao === versaoRota) telaErro();
@@ -166,6 +171,7 @@ function pintar(nome, html, { titulo, rolagem = 0, aba = null, acao = '' }) {
   elNav.hidden = !aba;
   elNav.innerHTML = aba ? htmlNav(aba) : '';
   dock.hidden = !acao && !aba;
+  app.querySelectorAll('[data-cronometro]').forEach(pintarCronometro);
   window.scrollTo(0, rolagem);
   // Em troca de tela, o foco vai para o título (A11-16).
   if (location.hash !== ultimoHashFocado) {
@@ -250,6 +256,9 @@ function htmlTagStatus(item) {
 }
 
 function htmlAcoesCard(item) {
+  if (fimDoPenetrante(item)) {
+    return `<button class="btn btn-secundario btn-md btn-bloco card-sobre" type="button" data-acao="card-revelador" data-id="${item.id}">Marcar revelador</button>`;
+  }
   if (!item.status) {
     const chips = STATUS
       .map(
@@ -263,6 +272,30 @@ function htmlAcoesCard(item) {
   return acao
     ? `<a class="btn btn-secundario btn-md btn-bloco card-sobre" href="#/nova/${acao.acao}/${item.id}">${esc(acao.rotulo)}</a>`
     : '';
+}
+
+function htmlCronometro(item) {
+  const fim = fimDoPenetrante(item);
+  return fim ? `<div class="cronometro" data-cronometro="${fim}" role="timer"></div>` : '';
+}
+
+function partesDoCronometro(fim) {
+  const restante = fim - Date.now();
+  if (restante > 0) return { estado: 'contando', icone: 'relogio', rotulo: 'Penetrante', tempo: textoTempoRestante(restante) };
+  const minutos = Math.floor(-restante / 60000);
+  let tempo = 'agora';
+  if (minutos >= 60) tempo = `há ${formatoHoras.format(Math.floor(minutos / 60))}`;
+  else if (minutos >= 1) tempo = `há ${formatoMinutos.format(minutos)}`;
+  return { estado: 'pronto', icone: 'check', rotulo: 'Pronto para revelar', tempo };
+}
+
+function pintarCronometro(el) {
+  const partes = partesDoCronometro(Number(el.dataset.cronometro));
+  if (el.dataset.estado !== partes.estado) {
+    el.dataset.estado = partes.estado;
+    el.innerHTML = `${icone(partes.icone, 16)}<span>${partes.rotulo}</span><span class="cronometro-tempo"></span>`;
+  }
+  el.querySelector('.cronometro-tempo').textContent = partes.tempo;
 }
 
 function htmlCard(item, fotos) {
@@ -293,6 +326,7 @@ function htmlCard(item, fotos) {
           </a>
           <button class="btn-icone card-sobre" type="button" data-acao="card-foto" data-id="${item.id}" data-turno="${item.turnoId}" aria-label="Adicionar foto de ${esc(nome)}">${icone('camera', 24)}</button>
         </div>
+        ${htmlCronometro(item)}
         ${miniaturas ? `<div class="miniaturas">${miniaturas}</div>` : ''}
         ${erro ? `<p class="erro-campo">${esc(erro)}</p>` : ''}
       </div>
@@ -324,6 +358,7 @@ async function telaTurno() {
   const [itens, fotos] = await Promise.all([db.itensDoTurno(turno.id), db.fotosDoTurno(turno.id)]);
   if (versao !== versaoRota) return;
 
+  sincronizarCronometros(itens);
   const fotosPorItem = new Map();
   fotos.forEach((f) => fotosPorItem.set(f.itemId, [...(fotosPorItem.get(f.itemId) || []), f]));
   const horas = Math.floor((Date.now() - turno.criadoEm) / 3600000);
@@ -369,6 +404,17 @@ async function definirStatusDoCard(id, status) {
   else telaTurno();
 }
 
+async function marcarRevelador(id) {
+  const item = await db.obter('itens', id);
+  if (!item) return;
+  await db.gravar('itens', { ...item, revelador: true });
+  telaTurno();
+  mostrarToast('Revelador marcado', 'Desfazer', async () => {
+    await db.gravar('itens', item);
+    telaTurno();
+  });
+}
+
 /* Formulário da inspeção */
 function camposDoForm(f) {
   const { tipo, penetracao, revelador, reinspecao, hora, peca, qtd, of, status, qtdPendente, obs } = f;
@@ -403,6 +449,13 @@ function limparRascunho() {
   }
 }
 
+// Sem mexer na hora, a contagem começa ao salvar. Com a hora corrigida, vale a hora digitada.
+function inicioDaContagem(f) {
+  if (!f.penetracao || f.revelador) return f.penetranteEm ?? null;
+  if (f.hora !== f.horaInicial) return momentoDaHora(f.hora);
+  return f.penetranteEm ?? Date.now();
+}
+
 function formParaItem(f) {
   const qtd = parseInt(f.qtd, 10) || null;
   return {
@@ -414,6 +467,7 @@ function formParaItem(f) {
     revelador: f.revelador,
     reinspecao: f.reinspecao,
     hora: f.hora || horaAgora(),
+    penetranteEm: inicioDaContagem(f),
     peca: f.peca.trim(),
     qtd,
     of: f.of.trim().replace(/-$/, ''),
@@ -500,6 +554,7 @@ function sairDoFormulario() {
 }
 
 function formVazio(turno, anterior) {
+  const hora = horaAgora();
   return {
     id: uid(),
     turnoId: turno.id,
@@ -507,9 +562,10 @@ function formVazio(turno, anterior) {
     criadoEm: Date.now(),
     tipo: anterior?.tipo || 'LP',
     penetracao: true,
-    revelador: true,
+    revelador: false,
     reinspecao: false,
-    hora: horaAgora(),
+    hora,
+    horaInicial: hora,
     peca: '',
     qtd: '',
     of: '',
@@ -524,6 +580,7 @@ function itemParaForm(item) {
     ...item,
     novo: false,
     pecaOriginal: item.peca,
+    horaInicial: item.hora,
     qtd: item.qtd ?? '',
     qtdPendente: item.qtdPendente ?? '',
     obs: item.obs ?? '',
@@ -564,7 +621,7 @@ function htmlFormulario(f) {
         <fieldset class="campo">
           <legend>Etapa</legend>
           <div class="chips">
-            ${chipAlternavel('penetracao', 'Penetração')}
+            ${chipAlternavel('penetracao', 'Penetrante')}
             ${chipAlternavel('revelador', 'Revelador')}
           </div>
         </fieldset>
@@ -572,6 +629,7 @@ function htmlFormulario(f) {
         <div class="campo" id="campo-hora">
           <label class="campo-rotulo" for="f-hora">Hora</label>
           <input class="entrada entrada-curta" id="f-hora" type="time" value="${esc(f.hora)}" />
+          <p class="nota" id="nota-contagem"></p>
         </div>
 
         <div class="campo">
@@ -636,6 +694,9 @@ function pintarEscolhas() {
   });
   // A hora só sai no relatório quando a linha é só de penetração.
   $('campo-hora').hidden = !(form.penetracao && !form.revelador);
+  const minutos = MINUTOS_PENETRANTE[form.tipo];
+  const tempo = minutos < 60 ? formatoMinutos.format(minutos) : formatoHoras.format(minutos / 60);
+  $('nota-contagem').textContent = form.novo ? `Ao salvar, começa a contagem de ${tempo}.` : `Tempo de penetrante: ${tempo}.`;
 }
 
 function htmlChipsTexto(lista, acao) {
@@ -723,7 +784,7 @@ async function telaFormulario({ id, acao, origemId }) {
       const origem = await db.obter('itens', origemId);
       if (origem) {
         const dados = dadosProximaAcao(origem, acao, horaAgora());
-        inicial = { ...inicial, ...dados, qtd: dados.qtd ?? '', qtdPendente: '' };
+        inicial = { ...inicial, ...dados, horaInicial: dados.hora, qtd: dados.qtd ?? '', qtdPendente: '' };
       }
     }
   }
@@ -834,75 +895,6 @@ async function removerFoto(id) {
 }
 
 /* Relatório */
-function rotuloLote(indice, total, verbo, feito) {
-  const inicio = indice * FOTOS_POR_ENVIO + 1;
-  const fim = Math.min(inicio + FOTOS_POR_ENVIO - 1, total);
-  if (feito) {
-    const passado = verbo === 'Enviar' ? 'enviada' : 'baixada';
-    return inicio === fim ? `Foto ${inicio} ${passado}` : `Fotos ${inicio} a ${fim} ${passado}s`;
-  }
-  return inicio === fim ? `${verbo} foto ${inicio}` : `${verbo} fotos ${inicio} a ${fim}`;
-}
-
-function pintarLotes() {
-  const area = $('area-fotos');
-  if (!area || !preparo) return;
-  const { arquivos, total, pronto, enviados, falhas, erroEnvio } = preparo;
-  area.hidden = !total;
-  if (!total) return;
-  if (!pronto) {
-    const lotes = Math.ceil(total / FOTOS_POR_ENVIO);
-    area.innerHTML = `
-      <h2>Fotos</h2>
-      <p class="nota" role="status">Preparando foto ${Math.min(arquivos.length + falhas + 1, total)} de ${total}…</p>
-      <div class="pilha">${'<div class="esqueleto esqueleto-botao btn-bloco"></div>'.repeat(lotes)}</div>`;
-    return;
-  }
-  const compartilha = Boolean(navigator.canShare && arquivos.length && navigator.canShare({ files: arquivos.slice(0, 1) }));
-  const verbo = compartilha ? 'Enviar' : 'Baixar';
-  const botoes = [];
-  for (let i = 0; i * FOTOS_POR_ENVIO < arquivos.length; i += 1) {
-    const feito = enviados.has(i);
-    botoes.push(
-      `<button class="btn btn-secundario btn-bloco" type="button" data-acao="enviar-lote" data-lote="${i}">${icone(feito ? 'check' : compartilha ? 'enviar' : 'baixar', 16, { bold: feito })}${esc(rotuloLote(i, arquivos.length, verbo, feito))}</button>`,
-    );
-  }
-  area.innerHTML = `
-    <h2>Fotos</h2>
-    <p class="nota">Cada foto sai com a OF, a peça e o status escritos embaixo.</p>
-    ${falhas ? `<p class="erro-campo">${esc(plural(falhas, 'foto não pôde ser preparada', 'fotos não puderam ser preparadas'))}. Abra o relatório de novo para tentar.</p>` : ''}
-    ${erroEnvio ? `<p class="erro-campo">${esc(erroEnvio)}</p>` : ''}
-    <div class="pilha">${botoes.join('')}</div>`;
-}
-
-// As fotos ficam prontas antes do toque: o celular só abre o compartilhar logo depois de um toque.
-async function prepararFotos(turno, itens, fotos, versao) {
-  const posicao = new Map(itens.map((i, n) => [i.id, n]));
-  const ordenadas = [...fotos].sort((a, b) => posicao.get(a.itemId) - posicao.get(b.itemId) || a.criadoEm - b.criadoEm);
-  const assinatura = JSON.stringify([montarRelatorio(turno, itens), ordenadas.map((f) => f.id)]);
-  if (preparo?.assinatura === assinatura && preparo.pronto && !preparo.falhas) {
-    pintarLotes();
-    return;
-  }
-  const atual = { assinatura, arquivos: [], enviados: new Set(), pronto: false, total: ordenadas.length, falhas: 0, erroEnvio: '' };
-  preparo = atual;
-  pintarLotes();
-  const itemPorId = new Map(itens.map((i) => [i.id, i]));
-  for (const foto of ordenadas) {
-    if (preparo !== atual || versao !== versaoRota) return;
-    const item = itemPorId.get(foto.itemId);
-    try {
-      const nome = nomeArquivoFoto(atual.arquivos.length + 1, item);
-      atual.arquivos.push(await carimbarFoto(foto.blob, legendaFoto(turno, item), nome));
-    } catch {
-      atual.falhas += 1;
-    }
-    pintarLotes();
-  }
-  atual.pronto = true;
-  pintarLotes();
-}
-
 function htmlAlertaStatus(itens) {
   const semStatus = itens.filter((i) => !i.status);
   if (!semStatus.length) {
@@ -913,6 +905,24 @@ function htmlAlertaStatus(itens) {
       <p class="alerta-titulo">${icone('aviso', 16)}${esc(plural(semStatus.length, 'inspeção', 'inspeções'))} sem status</p>
       ${semStatus.map((i) => `<a class="alerta-link" href="#/item/${i.id}">${esc(linhaItem(i).slice(2))}</a>`).join('')}
     </section>`;
+}
+
+function htmlEnvioPdf(pdf, conteudo, fotosDeFora) {
+  const avisos = '<p id="erro-envio" class="erro-campo" hidden></p>';
+  const copiar = `<button class="btn btn-secundario btn-bloco" type="button" data-acao="copiar-texto">${icone('copiar', 16)}<span aria-live="polite">Copiar texto</span></button>`;
+  if (!pdf) {
+    return `<p class="erro-campo">Não foi possível montar o PDF. Abra o relatório de novo para tentar.</p>${avisos}<div class="pilha">${copiar}</div>`;
+  }
+  const compartilha = Boolean(navigator.canShare?.({ files: [pdf] }));
+  return `
+    <p class="nota">PDF com ${esc(conteudo)}, ${esc(formatoMb.format(pdf.size / 1048576))}.</p>
+    ${fotosDeFora ? `<p class="erro-campo">${esc(plural(fotosDeFora, 'foto não entrou', 'fotos não entraram'))} no PDF por erro de leitura. Anexe de novo na inspeção.</p>` : ''}
+    ${avisos}
+    <div class="pilha">
+      ${compartilha ? `<button class="btn btn-primario btn-bloco" type="button" data-acao="enviar-pdf">${icone('enviar', 16, { bold: true })}<span aria-live="polite">Enviar PDF no WhatsApp</span></button>` : ''}
+      <button class="btn ${compartilha ? 'btn-secundario' : 'btn-primario'} btn-bloco" type="button" data-acao="baixar-pdf">${icone('baixar', 16)}<span aria-live="polite">Baixar PDF</span></button>
+      ${copiar}
+    </div>`;
 }
 
 async function telaRelatorio(id) {
@@ -947,18 +957,26 @@ async function telaRelatorio(id) {
 
   const texto = montarRelatorio(turno, itens);
   const ehAtual = turno.id === atualId;
-  relatorioAberto = { turno, texto, itens, fotos };
+  const conteudo = formatoLista.format(partesContagem(itens, fotos));
+  let pdf = null;
+  let fotosDeFora = 0;
+  if (itens.length) {
+    try {
+      const gerado = await gerarRelatorioPdf({ turno, itens, fotos, cores: lerCoresDoTema(), resumo: conteudo });
+      pdf = gerado.arquivo;
+      fotosDeFora = gerado.falhas;
+    } catch (erro) {
+      console.error(erro);
+    }
+    if (versao !== versaoRota) return;
+  }
+  relatorioAberto = { turno, texto, itens, fotos, pdf };
 
   const corpo = itens.length
     ? `
       ${htmlAlertaStatus(itens)}
       <div class="previa" id="previa">${esc(texto)}</div>
-      <p id="erro-texto" class="erro-campo" hidden></p>
-      <div class="pilha">
-        <button class="btn btn-primario btn-bloco" type="button" data-acao="enviar-texto">${icone('enviar', 16, { bold: true })}<span aria-live="polite">Enviar texto no WhatsApp</span></button>
-        <button class="btn btn-secundario btn-bloco" type="button" data-acao="copiar-texto">${icone('copiar', 16)}<span aria-live="polite">Copiar texto</span></button>
-      </div>
-      <section class="bloco" id="area-fotos"></section>`
+      ${htmlEnvioPdf(pdf, conteudo, fotosDeFora)}`
     : htmlVazio({
         iconeNome: 'relatorio',
         titulo: 'Nada para relatar ainda',
@@ -982,7 +1000,6 @@ async function telaRelatorio(id) {
     </div>`,
     { titulo: 'Relatório', aba: id ? null : 'relatorio' },
   );
-  if (itens.length) prepararFotos(turno, itens, fotos, versao);
 }
 
 // Copiar e enviar confirmam no próprio botão, sem mudar a largura (CTL-19, MOT-06).
@@ -996,22 +1013,32 @@ function confirmarNoBotao(botao, rotulo) {
   }, 1600);
 }
 
-async function enviarTexto(botao) {
-  const { texto } = relatorioAberto;
-  if (navigator.share) {
-    try {
-      await navigator.share({ text: texto });
-      confirmarNoBotao(botao, 'Texto enviado');
-      return;
-    } catch (erro) {
-      if (erro.name === 'AbortError') return;
-    }
+async function enviarPdf(botao) {
+  const aviso = $('erro-envio');
+  aviso.hidden = true;
+  try {
+    await navigator.share({ files: [relatorioAberto.pdf] });
+    confirmarNoBotao(botao, 'PDF enviado');
+  } catch (erro) {
+    if (erro.name === 'AbortError') return;
+    aviso.hidden = false;
+    aviso.textContent = 'O celular não conseguiu compartilhar o PDF. Toque em Baixar PDF e envie o arquivo pelo WhatsApp.';
   }
-  window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank', 'noopener');
+}
+
+function baixarPdf(botao) {
+  const { pdf } = relatorioAberto;
+  const url = URL.createObjectURL(pdf);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = pdf.name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  confirmarNoBotao(botao, 'PDF baixado');
 }
 
 async function copiarTexto(botao) {
-  const aviso = $('erro-texto');
+  const aviso = $('erro-envio');
   try {
     await navigator.clipboard.writeText(relatorioAberto.texto);
     aviso.hidden = true;
@@ -1020,38 +1047,6 @@ async function copiarTexto(botao) {
     aviso.hidden = false;
     aviso.textContent = 'Não foi possível copiar. Toque e segure no texto acima para copiar.';
   }
-}
-
-function baixarArquivos(arquivos) {
-  arquivos.forEach((arquivo, n) => {
-    setTimeout(() => {
-      const url = URL.createObjectURL(arquivo);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = arquivo.name;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-    }, n * 300);
-  });
-}
-
-async function enviarLote(indice) {
-  const lote = preparo.arquivos.slice(indice * FOTOS_POR_ENVIO, (indice + 1) * FOTOS_POR_ENVIO);
-  preparo.erroEnvio = '';
-  if (navigator.canShare && navigator.canShare({ files: lote })) {
-    try {
-      await navigator.share({ files: lote });
-    } catch (erro) {
-      if (erro.name === 'AbortError') return;
-      preparo.erroEnvio = 'O celular não conseguiu compartilhar estas fotos. Toque de novo para tentar.';
-      pintarLotes();
-      return;
-    }
-  } else {
-    baixarArquivos(lote);
-  }
-  preparo.enviados.add(indice);
-  pintarLotes();
 }
 
 async function encerrarTurno() {
@@ -1309,9 +1304,10 @@ const ACOES = {
   },
   'card-foto': (el) => pedirFoto(inputGaleria, el.dataset.id, el.dataset.turno),
   'card-status': (el) => definirStatusDoCard(el.dataset.id, el.dataset.v),
-  'enviar-texto': (el) => enviarTexto(el),
+  'card-revelador': (el) => marcarRevelador(el.dataset.id),
+  'enviar-pdf': (el) => enviarPdf(el),
+  'baixar-pdf': (el) => baixarPdf(el),
   'copiar-texto': (el) => copiarTexto(el),
-  'enviar-lote': (el) => enviarLote(Number(el.dataset.lote)),
   'encerrar-turno': () => encerrarTurno(),
   'reabrir-turno': () => reabrirTurno(),
   'excluir-turno': () => excluirTurno(),
@@ -1352,6 +1348,70 @@ window.addEventListener('beforeinstallprompt', (evento) => {
 new ResizeObserver(() => {
   document.documentElement.style.setProperty('--dock-offset', `${dock.offsetHeight}px`);
 }).observe(dock);
+
+/* Cronômetro: a contagem vem do relógio, então continua certa com o app fechado. */
+function sincronizarCronometros(itens) {
+  const agora = Date.now();
+  const anteriores = new Map(cronometros);
+  cronometros.clear();
+  for (const item of itens) {
+    const fim = fimDoPenetrante(item);
+    if (!fim) continue;
+    const anterior = anteriores.get(item.id);
+    cronometros.set(item.id, { fim, nome: descricaoPeca(item), avisado: anterior?.fim === fim ? anterior.avisado : agora >= fim });
+  }
+}
+
+async function carregarCronometros() {
+  try {
+    const id = await db.lerConfig('turnoAtualId');
+    sincronizarCronometros(id ? await db.itensDoTurno(id) : []);
+  } catch {
+    /* Sem dados não há o que contar. */
+  }
+}
+
+let audio;
+function prepararAudio() {
+  audio ??= new AudioContext();
+  if (audio.state === 'suspended') audio.resume();
+}
+
+function tocarAlerta() {
+  if (!audio) return;
+  [0, 0.25].forEach((atraso) => {
+    const oscilador = audio.createOscillator();
+    const volume = audio.createGain();
+    oscilador.frequency.value = 880;
+    volume.gain.value = 0.2;
+    oscilador.connect(volume).connect(audio.destination);
+    oscilador.start(audio.currentTime + atraso);
+    oscilador.stop(audio.currentTime + atraso + 0.15);
+  });
+}
+
+function avisarFimDoPenetrante(cronometro) {
+  navigator.vibrate?.([400, 200, 400]);
+  tocarAlerta();
+  mostrarToast(`${cronometro.nome}: pronto para revelar`, 'Ver turno', () => {
+    location.hash = '#/';
+  });
+}
+
+function aoPassarUmSegundo() {
+  const agora = Date.now();
+  for (const cronometro of cronometros.values()) {
+    if (!cronometro.avisado && agora >= cronometro.fim) {
+      cronometro.avisado = true;
+      avisarFimDoPenetrante(cronometro);
+    }
+  }
+  app.querySelectorAll('[data-cronometro]').forEach(pintarCronometro);
+}
+
+setInterval(aoPassarUmSegundo, 1000);
+document.addEventListener('visibilitychange', aoPassarUmSegundo);
+document.addEventListener('pointerdown', prepararAudio);
 
 /* Início */
 function iniciar() {
