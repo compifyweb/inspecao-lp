@@ -49,6 +49,7 @@ const MENSAGEM_ESPACO = 'Sem espaço para guardar a foto. Exclua turnos antigos 
 const regrasPlural = new Intl.PluralRules('pt-BR');
 const formatoLista = new Intl.ListFormat('pt-BR', { style: 'long', type: 'conjunction' });
 const formatoMb = new Intl.NumberFormat('pt-BR', { style: 'unit', unit: 'megabyte', maximumFractionDigits: 1 });
+const formatoKb = new Intl.NumberFormat('pt-BR', { style: 'unit', unit: 'kilobyte', maximumFractionDigits: 0 });
 const formatoMinutos = new Intl.NumberFormat('pt-BR', { style: 'unit', unit: 'minute', unitDisplay: 'short' });
 const formatoHoras = new Intl.NumberFormat('pt-BR', { style: 'unit', unit: 'hour', unitDisplay: 'short' });
 const plural = (n, um, varios) => `${n} ${regrasPlural.select(n) === 'one' ? um : varios}`;
@@ -915,7 +916,7 @@ function htmlEnvioPdf(pdf, conteudo, fotosDeFora) {
   }
   const compartilha = Boolean(navigator.canShare?.({ files: [pdf] }));
   return `
-    <p class="nota">PDF com ${esc(conteudo)}, ${esc(formatoMb.format(pdf.size / 1048576))}.</p>
+    <p class="nota">PDF com ${esc(conteudo)}, ${esc(pdf.size < 1048576 ? formatoKb.format(Math.ceil(pdf.size / 1024)) : formatoMb.format(pdf.size / 1048576))}.</p>
     ${fotosDeFora ? `<p class="erro-campo">${esc(plural(fotosDeFora, 'foto não entrou', 'fotos não entraram'))} no PDF por erro de leitura. Anexe de novo na inspeção.</p>` : ''}
     ${avisos}
     <div class="pilha">
