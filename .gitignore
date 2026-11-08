@@ -1,0 +1,14 @@
+# Repositório público: só os arquivos do app podem subir.
+# tests/ tem dados reais de inspeção e nunca deve entrar aqui.
+*
+!.gitignore
+!.nojekyll
+!index.html
+!manifest.webmanifest
+!sw.js
+!css/
+!css/**
+!js/
+!js/**
+!icons/
+!icons/**

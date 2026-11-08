@@ -1,0 +1,140 @@
+@layer telas {
+  .tela {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    max-width: calc(var(--layout-content) + var(--layout-margin) * 2);
+    margin: 0 auto;
+    padding: var(--space-3) var(--layout-margin) calc(var(--dock-offset) + var(--space-6));
+  }
+
+  .barra {
+    display: grid;
+    grid-template-columns: var(--control-lg) 1fr var(--control-lg);
+    align-items: center;
+    gap: var(--space-2);
+    max-width: calc(var(--layout-content) + var(--layout-margin) * 2);
+    margin: 0 auto;
+    padding: var(--space-2) var(--layout-margin) 0;
+  }
+
+  .barra h1 {
+    text-align: center;
+  }
+
+  .cabecalho {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-8) var(--space-2);
+    text-align: center;
+  }
+
+  .cabecalho-equipe {
+    color: var(--fgColor-muted);
+    overflow-wrap: anywhere;
+  }
+
+  .cabecalho-acao {
+    position: absolute;
+    top: 0;
+    right: calc(var(--space-1) * -1);
+  }
+
+  .lista {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .pilha {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .bloco {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .encerramento {
+    margin-top: var(--space-3);
+    padding-top: var(--space-5);
+    border-top: 1px solid var(--borderColor-default);
+  }
+
+  /* Cabeçalho alinhado à esquerda fora do celular (MOB-16 vale até 767px) */
+  @media (min-width: 768px) {
+    .cabecalho {
+      align-items: flex-start;
+      padding-inline: 0 var(--space-8);
+      text-align: left;
+    }
+    .pilha {
+      align-items: flex-start;
+    }
+    .card .btn-bloco {
+      align-self: flex-start;
+    }
+  }
+
+  /* Navegação por largura de janela (APP-21) */
+  @media (min-width: 600px) {
+    body:has(.nav:not([hidden])) {
+      padding-left: var(--layout-rail);
+    }
+    .dock {
+      position: static;
+      border: 0;
+      background: none;
+    }
+    .nav {
+      position: fixed;
+      inset: 0 auto 0 0;
+      flex-direction: column;
+      justify-content: flex-start;
+      gap: var(--space-2);
+      width: var(--layout-rail);
+      padding: var(--space-4) 0;
+      background: var(--bgColor-surface);
+    }
+    .nav-item {
+      flex: none;
+    }
+    .dock-acao,
+    .dock:not(:has(.nav:not([hidden]))) .dock-acao {
+      position: fixed;
+      right: var(--layout-margin);
+      bottom: var(--space-5);
+      padding: 0;
+    }
+    .tela {
+      padding-bottom: calc(var(--control-lg) + var(--space-9));
+    }
+    .toast {
+      bottom: calc(var(--control-lg) + var(--space-6));
+    }
+  }
+
+  @media (min-width: 1200px) {
+    body:has(.nav:not([hidden])) {
+      padding-left: var(--layout-sidebar);
+    }
+    .nav {
+      width: var(--layout-sidebar);
+      padding-inline: var(--space-3);
+    }
+    .nav-item {
+      flex-direction: row;
+      justify-content: flex-start;
+      gap: var(--space-3);
+      height: var(--control-lg);
+      padding-inline: var(--space-3);
+      border-radius: var(--radius-base);
+    }
+  }
+}

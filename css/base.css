@@ -1,0 +1,136 @@
+@layer base {
+  :root {
+    --focus-ring: 0 0 0 2px var(--bgColor-surface), 0 0 0 4px var(--borderColor-focus);
+    --transition-control:
+      background-color var(--duration-fast) var(--ease-out),
+      border-color var(--duration-fast) var(--ease-out),
+      color var(--duration-fast) var(--ease-out);
+    --transition-card: background-color var(--duration-card) var(--ease-out);
+
+    /* Camada herdada do contêiner (DSY-30): sobre o fundo cinza, controle é branco. */
+    --layer-control: var(--bgColor-surface);
+    --layer-control-hover: var(--bgColor-control);
+    --layer-field: var(--bgColor-surface);
+
+    /* Altura do rodapé fixo, medida em execução. */
+    --dock-offset: 0px;
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  [hidden] {
+    display: none !important;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scrollbar-gutter: stable;
+    scroll-padding-bottom: calc(var(--dock-offset) + var(--space-5));
+  }
+
+  body {
+    margin: 0;
+    background: var(--bgColor-canvas);
+    color: var(--fgColor-default);
+    font-family: var(--font-family-base);
+    font-size: var(--text-body-size);
+    line-height: var(--text-body-lineHeight);
+    font-weight: var(--text-body-weight);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body:has(dialog[open]) {
+    overflow: hidden;
+  }
+
+  h1,
+  h2,
+  p {
+    margin: 0;
+  }
+
+  h1 {
+    font-size: var(--text-page-size);
+    line-height: var(--text-page-lineHeight);
+    font-weight: var(--text-page-weight);
+    letter-spacing: var(--text-page-tracking);
+    text-wrap: balance;
+  }
+
+  h1:focus,
+  h1:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+
+  h2 {
+    font-size: var(--text-section-size);
+    line-height: var(--text-section-lineHeight);
+    font-weight: var(--text-section-weight);
+    letter-spacing: var(--text-section-tracking);
+    text-wrap: balance;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  button {
+    border: 0;
+    margin: 0;
+    padding: 0;
+    background: none;
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: var(--bgColor-selection);
+    color: var(--fgColor-default);
+  }
+
+  /* O contorno transparente só aparece nas cores forçadas do Windows (A11-09). */
+  :focus-visible {
+    outline: 2px solid transparent;
+    box-shadow: var(--focus-ring);
+  }
+
+  .nota {
+    color: var(--fgColor-subtle);
+    font-size: var(--text-caption-size);
+    line-height: var(--text-caption-lineHeight);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+}
