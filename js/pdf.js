@@ -2,6 +2,7 @@
 // As fotos entram como JPEG direto no arquivo: sem recomprimir e sem carregar tudo na memória.
 
 export const A4 = { largura: 595.28, altura: 841.89 };
+const TRACO_PESO_MEDIO = 0.015;
 
 // Larguras da Helvetica, de 32 a 126, em milésimos do tamanho da fonte.
 const LARGURAS = [
@@ -116,8 +117,12 @@ export class DocumentoPdf {
   }
 
   // Coordenadas com origem no canto superior esquerdo, como na tela.
-  texto(x, y, conteudo, { tamanho, cor }) {
-    this.atual.ops.push(`BT /F1 ${n(tamanho)} Tf ${corEmRgb(cor)} rg ${n(x)} ${n(A4.altura - y)} Td <${textoEmHex(conteudo)}> Tj ET`);
+  // A Helvetica padrão só tem regular e negrito: o peso 500 sai de um traço fino na cor da letra.
+  texto(x, y, conteudo, { tamanho, cor, peso = 400, tracking = 0 }) {
+    const rgb = corEmRgb(cor);
+    const texto = `BT /F1 ${n(tamanho)} Tf ${rgb} rg ${n(x)} ${n(A4.altura - y)} Td <${textoEmHex(conteudo)}> Tj ET`;
+    const ajustes = [peso === 500 && `${rgb} RG ${n(tamanho * TRACO_PESO_MEDIO)} w 2 Tr`, tracking && `${n(tamanho * tracking)} Tc`].filter(Boolean);
+    this.atual.ops.push(ajustes.length ? `q ${ajustes.join(' ')} ${texto} Q` : texto);
   }
 
   caminhoRetangulo(x, y, largura, altura, raio) {
@@ -141,6 +146,10 @@ export class DocumentoPdf {
 
   retangulo(x, y, largura, altura, { cor, raio = 0 }) {
     this.atual.ops.push(`${corEmRgb(cor)} rg ${this.caminhoRetangulo(x, y, largura, altura, raio)} f`);
+  }
+
+  contorno(x, y, largura, altura, { cor, raio = 0, espessura = 0.75 }) {
+    this.atual.ops.push(`${corEmRgb(cor)} RG ${n(espessura)} w ${this.caminhoRetangulo(x, y, largura, altura, raio)} S`);
   }
 
   linha(x1, y, x2, { cor, espessura = 0.75 }) {

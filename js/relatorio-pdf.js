@@ -1,23 +1,30 @@
-// Layout do relatório em PDF: cada inspeção seguida das suas fotos.
+// Layout do relatório em PDF: abertura com os dados do turno e uma moldura por inspeção.
 import { A4, DocumentoPdf, dimensoesJpeg, larguraTexto, quebrarLinhas } from './pdf.js';
 import { STATUS, cabecalho, dataCompleta, descricaoPeca, nomeArquivoPdf, rotuloEtapa, textoOf, textoStatus } from './relatorio.js';
 
 const MARGEM = 36;
 const LARGURA = A4.largura - MARGEM * 2;
 const LIMITE = A4.altura - MARGEM - 28;
+const RECUO = 12; // O padding de 16px do card, no papel.
+const INTERIOR = MARGEM + RECUO;
+const LARGURA_INTERNA = LARGURA - RECUO * 2;
 const VAO = 8;
-const LARGURA_FOTO = (LARGURA - VAO) / 2;
-const ALTURA_MAX_FOTO = 225;
+const VAO_CARDS = 12;
+const VAO_COLUNAS = 16;
+const LARGURA_COLUNA = (LARGURA_INTERNA - VAO_COLUNAS * 2) / 3;
+const LARGURA_FOTO = (LARGURA_INTERNA - VAO) / 2;
+const ALTURA_MAX_FOTO = 214.79; // Três fotos em pé, de 3 por 4, preenchem a linha.
+const MAIOR_VAZIO_NA_PAGINA = 300;
 const TAG_ALTURA = 20;
 const TAG_RECUO = 8;
 const RAIO = 8;
 const RAIO_INTERNO = 4;
 
-// Mesma escala das telas: 14px na interface equivalem a 10,5pt no papel.
+// Escala das telas no celular: 14px na interface equivalem a 10,5pt no papel.
 const TIPO = {
-  pagina: { tamanho: 24, linha: 34 },
-  titulo: { tamanho: 15, linha: 21 },
-  corpo: { tamanho: 12, linha: 18 },
+  pagina: { tamanho: 18, linha: 25, tracking: -0.01 },
+  titulo: { tamanho: 13.5, linha: 19, peso: 500 },
+  corpo: { tamanho: 12, linha: 17 },
   legenda: { tamanho: 10.5, linha: 15 },
 };
 
@@ -35,7 +42,8 @@ export function lerCoresDoTema() {
     apoio: ler('--fgColor-muted'),
     sutil: ler('--fgColor-subtle'),
     faixa: ler('--bgColor-canvas'),
-    fio: ler('--bgColor-selected'),
+    moldura: ler('--borderColor-control'),
+    fio: ler('--tag-neutro-border'),
     tags: Object.fromEntries(['verde', 'amarelo', 'laranja', 'neutro'].map((cor) => [cor, tag(cor)])),
   };
 }
@@ -51,7 +59,7 @@ function montarLinhasDeFotos(fotos) {
   let linha = [];
   let usado = 0;
   for (const foto of fotos.map(medirFoto)) {
-    if (linha.length && usado + VAO + foto.largura > LARGURA) {
+    if (linha.length && usado + VAO + foto.largura > LARGURA_INTERNA) {
       linhas.push(linha);
       linha = [];
       usado = 0;
@@ -93,7 +101,7 @@ function desenharTag(doc, x, y, etiqueta) {
   doc.texto(x + TAG_RECUO, y + (TAG_ALTURA + TIPO.legenda.tamanho * 0.7) / 2, etiqueta.rotulo, { tamanho: TIPO.legenda.tamanho, cor: etiqueta.cor });
 }
 
-export async function gerarRelatorioPdf({ turno, itens, fotos, cores, resumo }) {
+export async function gerarRelatorioPdf({ turno, itens, fotos, cores }) {
   const doc = new DocumentoPdf({ titulo: `Relatório de inspeção, ${cabecalho(turno)}` });
   const { porItem, falhas } = await registrarFotos(doc, fotos);
   const ordenados = [...itens].sort(porCriacao);
@@ -104,100 +112,99 @@ export async function gerarRelatorioPdf({ turno, itens, fotos, cores, resumo }) 
     y = MARGEM;
   };
   const escrever = (texto, tipo, cor) => {
-    doc.texto(MARGEM, linhaBase(y, tipo), texto, { tamanho: tipo.tamanho, cor });
+    doc.texto(INTERIOR, linhaBase(y, tipo), texto, { tamanho: tipo.tamanho, peso: tipo.peso, tracking: tipo.tracking, cor });
     y += tipo.linha;
   };
+  const desenharMoldura = (topo, altura) => doc.contorno(MARGEM, topo, LARGURA, altura, { cor: cores.moldura, raio: RAIO });
 
   /* Abertura */
   novaPagina();
-  escrever('Relatório de inspeção', TIPO.pagina, cores.texto);
-  escrever('Líquido penetrante', TIPO.corpo, cores.apoio);
-  y += 12;
-
-  const colunaRotulo = 64;
-  const larguraValor = LARGURA - RAIO * 3 - colunaRotulo;
   const campos = [
     ['Empresa', turno.cliente],
     ['Data', dataCompleta(turno.data)],
     ['Equipe', turno.equipe],
   ]
     .filter(([, valor]) => valor)
-    .map(([rotulo, valor]) => ({ rotulo, linhas: quebrarLinhas(valor, larguraValor, TIPO.corpo.tamanho) }));
-  const alturaFaixa = 24 + campos.reduce((soma, campo) => soma + campo.linhas.length * TIPO.corpo.linha, 0);
-  doc.retangulo(MARGEM, y, LARGURA, alturaFaixa, { cor: cores.faixa, raio: RAIO });
-  let yCampo = y + 12;
-  for (const campo of campos) {
-    doc.texto(MARGEM + 12, linhaBase(yCampo, TIPO.corpo), campo.rotulo, { tamanho: TIPO.corpo.tamanho, cor: cores.apoio });
-    for (const linha of campo.linhas) {
-      doc.texto(MARGEM + 12 + colunaRotulo, linhaBase(yCampo, TIPO.corpo), linha, { tamanho: TIPO.corpo.tamanho, cor: cores.texto });
-      yCampo += TIPO.corpo.linha;
-    }
-  }
-  y += alturaFaixa + 16;
+    .map(([rotulo, valor]) => ({ rotulo, linhas: quebrarLinhas(valor, LARGURA_COLUNA, TIPO.corpo.tamanho) }));
+  const linhasDeValor = Math.max(...campos.map((campo) => campo.linhas.length));
+  const alturaAbertura = RECUO * 2 + TIPO.pagina.linha + VAO * 2 + TIPO.legenda.linha + linhasDeValor * TIPO.corpo.linha;
+  doc.retangulo(MARGEM, y, LARGURA, alturaAbertura, { cor: cores.faixa, raio: RAIO });
+  desenharMoldura(y, alturaAbertura);
+  const fimDaAbertura = y + alturaAbertura + VAO_COLUNAS;
 
-  escrever(resumo, TIPO.corpo, cores.texto);
-  y += 4;
-  const contagens = [
-    ...STATUS.map((s) => ({ nome: s.valor, cor: s.cor, total: ordenados.filter((i) => i.status === s.valor).length })),
-    { nome: 'Sem status', cor: 'neutro', total: ordenados.filter((i) => !i.status).length },
-  ].filter((c) => c.total);
-  let xTag = MARGEM;
-  for (const contagem of contagens) {
-    const etiqueta = { rotulo: `${contagem.nome}: ${contagem.total}`, ...cores.tags[contagem.cor] };
-    if (xTag + larguraDaTag(etiqueta) > MARGEM + LARGURA) {
-      xTag = MARGEM;
-      y += TAG_ALTURA + 4;
-    }
-    desenharTag(doc, xTag, y, etiqueta);
-    xTag += larguraDaTag(etiqueta) + 4;
-  }
-  y += TAG_ALTURA + 24;
+  y += RECUO;
+  const subtitulo = 'Líquido penetrante';
+  doc.texto(INTERIOR + LARGURA_INTERNA - larguraTexto(subtitulo, TIPO.corpo.tamanho), linhaBase(y, TIPO.pagina), subtitulo, { tamanho: TIPO.corpo.tamanho, cor: cores.apoio });
+  escrever('Relatório de inspeção', TIPO.pagina, cores.texto);
+  y += VAO;
+  doc.linha(INTERIOR, y, INTERIOR + LARGURA_INTERNA, { cor: cores.fio });
+  y += VAO;
+  campos.forEach((campo, coluna) => {
+    const x = INTERIOR + coluna * (LARGURA_COLUNA + VAO_COLUNAS);
+    doc.texto(x, linhaBase(y, TIPO.legenda), campo.rotulo, { tamanho: TIPO.legenda.tamanho, cor: cores.apoio });
+    campo.linhas.forEach((linha, i) => {
+      doc.texto(x, linhaBase(y + TIPO.legenda.linha + i * TIPO.corpo.linha, TIPO.corpo), linha, { tamanho: TIPO.corpo.tamanho, cor: cores.texto });
+    });
+  });
+  y = fimDaAbertura;
 
   /* Inspeções */
   ordenados.forEach((item, indice) => {
-    const numero = indice + 1;
-    const nome = descricaoPeca(item);
-    const titulo = quebrarLinhas(nome, LARGURA, TIPO.titulo.tamanho);
-    const obs = item.obs ? quebrarLinhas(`Obs: ${item.obs}`, LARGURA, TIPO.corpo.tamanho) : [];
-    const linhasDeFotos = montarLinhasDeFotos(porItem.get(item.id) || []);
-    const alturaTexto = TAG_ALTURA + 4 + titulo.length * TIPO.titulo.linha + TIPO.corpo.linha + (obs.length ? 4 + obs.length * TIPO.corpo.linha : 0);
-    const alturaPrimeiraFoto = linhasDeFotos.length ? VAO + alturaDaLinha(linhasDeFotos[0]) : 0;
-
-    // A inspeção nunca fica separada da primeira linha de fotos.
-    if (y + 24 + alturaTexto + alturaPrimeiraFoto > LIMITE) novaPagina();
-    else if (indice > 0) {
-      y += 12;
-      doc.linha(MARGEM, y, MARGEM + LARGURA, { cor: cores.fio });
-      y += 12;
-    }
-
+    const nome = `${indice + 1}. ${descricaoPeca(item)}`;
     const etiqueta = etiquetaDoItem(item, cores);
-    doc.texto(MARGEM, y + (TAG_ALTURA + TIPO.legenda.tamanho * 0.7) / 2, `${numero}. ${rotuloEtapa(item)}`, { tamanho: TIPO.legenda.tamanho, cor: cores.apoio });
-    desenharTag(doc, MARGEM + LARGURA - larguraDaTag(etiqueta), y, etiqueta);
-    y += TAG_ALTURA + 4;
+    const titulo = quebrarLinhas(nome, LARGURA_INTERNA - larguraDaTag(etiqueta) - RECUO, TIPO.titulo.tamanho);
+    const dados = quebrarLinhas(`${rotuloEtapa(item)} · ${textoOf(item)}`, LARGURA_INTERNA, TIPO.corpo.tamanho);
+    const obs = item.obs ? quebrarLinhas(`Obs: ${item.obs}`, LARGURA_INTERNA, TIPO.corpo.tamanho) : [];
+    const linhasDeFotos = montarLinhasDeFotos(porItem.get(item.id) || []);
 
+    const alturaTexto = titulo.length * TIPO.titulo.linha + dados.length * TIPO.corpo.linha + (obs.length ? VAO + obs.length * TIPO.corpo.linha : 0);
+    const alturasDasFotos = linhasDeFotos.map((linha) => VAO + alturaDaLinha(linha));
+    const alturaInteira = RECUO * 2 + alturaTexto + alturasDasFotos.reduce((soma, altura) => soma + altura, 0);
+    // Inspeção inteira na página seguinte, se isso não deixar um vazio grande nesta.
+    // Se a moldura precisar dividir, o texto fica sempre com a primeira linha de fotos.
+    const manterInteira = alturaInteira <= LIMITE - MARGEM && LIMITE - y <= MAIOR_VAZIO_NA_PAGINA;
+    const alturaMinima = manterInteira ? alturaInteira : RECUO * 2 + alturaTexto + (alturasDasFotos[0] || 0);
+    if (y > MARGEM && y + alturaMinima > LIMITE) novaPagina();
+
+    let topoDaMoldura = y;
+    const fecharMoldura = () => {
+      y += RECUO;
+      desenharMoldura(topoDaMoldura, y - topoDaMoldura);
+    };
+    const garantirEspaco = (altura) => {
+      if (y + altura + RECUO <= LIMITE) return;
+      fecharMoldura();
+      novaPagina();
+      topoDaMoldura = y;
+      y += RECUO;
+      const sufixo = ' (continuação)';
+      const [nomeCurto] = quebrarLinhas(nome, LARGURA_INTERNA - larguraTexto(sufixo, TIPO.legenda.tamanho), TIPO.legenda.tamanho);
+      escrever(`${nomeCurto}${sufixo}`, TIPO.legenda, cores.apoio);
+    };
+
+    y += RECUO;
+    desenharTag(doc, INTERIOR + LARGURA_INTERNA - larguraDaTag(etiqueta), y + (TIPO.titulo.linha - TAG_ALTURA) / 2, etiqueta);
     titulo.forEach((linha) => escrever(linha, TIPO.titulo, cores.texto));
-    escrever(textoOf(item), TIPO.corpo, cores.apoio);
-    if (obs.length) {
-      y += 4;
-      obs.forEach((linha) => escrever(linha, TIPO.corpo, cores.texto));
-    }
+    dados.forEach((linha) => escrever(linha, TIPO.corpo, cores.apoio));
+    if (obs.length) y += VAO;
+    obs.forEach((linha) => {
+      garantirEspaco(TIPO.corpo.linha);
+      escrever(linha, TIPO.corpo, cores.texto);
+    });
 
     for (const linha of linhasDeFotos) {
       const altura = alturaDaLinha(linha);
+      garantirEspaco(VAO + altura);
       y += VAO;
-      if (y + altura > LIMITE) {
-        novaPagina();
-        escrever(`${numero}. ${nome} (continuação)`, TIPO.legenda, cores.apoio);
-        y += VAO;
-      }
-      let x = MARGEM;
+      let x = INTERIOR;
       for (const foto of linha) {
         doc.imagem(foto.indice, x, y, foto.largura, foto.altura, { raio: RAIO_INTERNO });
         x += foto.largura + VAO;
       }
       y += altura;
     }
+    fecharMoldura();
+    y += VAO_CARDS;
   });
 
   /* Rodapé de cada página */

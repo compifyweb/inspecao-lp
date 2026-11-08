@@ -963,7 +963,7 @@ async function telaRelatorio(id) {
   let fotosDeFora = 0;
   if (itens.length) {
     try {
-      const gerado = await gerarRelatorioPdf({ turno, itens, fotos, cores: lerCoresDoTema(), resumo: conteudo });
+      const gerado = await gerarRelatorioPdf({ turno, itens, fotos, cores: lerCoresDoTema() });
       pdf = gerado.arquivo;
       fotosDeFora = gerado.falhas;
     } catch (erro) {
@@ -1414,6 +1414,19 @@ setInterval(aoPassarUmSegundo, 1000);
 document.addEventListener('visibilitychange', aoPassarUmSegundo);
 document.addEventListener('pointerdown', prepararAudio);
 
+// Voltar para o app não recarrega a página: é preciso procurar a versão nova nessa hora.
+// O preenchimento em andamento volta pelo rascunho.
+async function iniciarAtualizacoes() {
+  const jaTinhaVersao = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (jaTinhaVersao && !processando.size) location.reload();
+  });
+  const registro = await navigator.serviceWorker.register('sw.js');
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') registro.update().catch(() => {});
+  });
+}
+
 /* Início */
 function iniciar() {
   navigator.storage?.persist?.().catch(() => {});
@@ -1423,7 +1436,7 @@ function iniciar() {
   rotear();
 
   const emDesenvolvimento = ['localhost', '127.0.0.1'].includes(location.hostname) && !location.search.includes('sw=1');
-  if ('serviceWorker' in navigator && !emDesenvolvimento) navigator.serviceWorker.register('sw.js');
+  if ('serviceWorker' in navigator && !emDesenvolvimento) iniciarAtualizacoes();
 }
 
 iniciar();
