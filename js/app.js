@@ -634,7 +634,8 @@ function calcularSugestoes(todosItens, turnoId, catalogo) {
     const mesmoTurno = (b.turnoId === turnoId) - (a.turnoId === turnoId);
     return mesmoTurno || b.criadoEm - a.criadoEm;
   });
-  const ofs = [...new Set(recentes.map((i) => i.of))].slice(0, 6);
+  // Todas entram na busca; a tela mostra no máximo 6.
+  const ofs = [...new Set(recentes.map((i) => i.of))];
   return { pecas, ofs };
 }
 
@@ -762,12 +763,20 @@ function pintarSugestoesPeca() {
   $('sug-peca').innerHTML = htmlChipsTexto(lista, 'escolher-peca');
 }
 
+// Como na peça: as OFs só aparecem enquanto se digita. O hífen não conta, então 4501 acha 12345-01.
+const chaveOf = (texto) => texto.trim().replace(/-/g, '');
+
 function pintarSugestoesOf() {
-  const busca = form.of.trim();
-  $('sug-of').innerHTML = htmlChipsTexto(
-    sugestoes.ofs.filter((o) => o !== busca && o.includes(busca)),
-    'escolher-of',
-  );
+  const busca = chaveOf(form.of);
+  const lista = busca
+    ? sugestoes.ofs
+        .filter((o) => {
+          const chave = chaveOf(o);
+          return chave !== busca && chave.includes(busca);
+        })
+        .slice(0, 6)
+    : [];
+  $('sug-of').innerHTML = htmlChipsTexto(lista, 'escolher-of');
 }
 
 function pintarStatus() {
