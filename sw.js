@@ -1,5 +1,5 @@
 // Mantém o app abrindo sem internet. Atualizações entram na abertura seguinte.
-const CACHE = 'inspecao-lp-v4';
+const CACHE = 'inspecao-lp-v5';
 const ARQUIVOS = [
   './',
   './index.html',

@@ -1,13 +1,17 @@
 import * as db from './db.js';
 import {
   STATUS,
+  APROVADO_PARCIAL,
   MINUTOS_PENETRANTE,
   cabecalho,
   dataCurta,
   dadosProximaAcao,
   descricaoPeca,
+  faltaNaAprovacaoParcial,
   fimDoPenetrante,
   formatarOf,
+  fraseAprovacaoParcial,
+  obsComFrase,
   linhaItem,
   momentoDaHora,
   montarRelatorio,
@@ -87,6 +91,7 @@ let relatorioAberto = null;
 let turnoEmEdicao = null;
 let pedidoInstalacao = null;
 let timerToast;
+let statusPedido = null;
 const processando = new Map();
 const cronometros = new Map();
 const errosFoto = new Map();
@@ -261,7 +266,8 @@ function htmlAcoesCard(item) {
     return `<button class="btn btn-secundario btn-md btn-bloco card-sobre" type="button" data-acao="card-revelador" data-id="${item.id}">Marcar revelador</button>`;
   }
   if (!item.status) {
-    const chips = STATUS
+    // Aprovar parte só existe em lote com mais de uma peça.
+    const chips = STATUS.filter((s) => s.valor !== APROVADO_PARCIAL || item.qtd > 1)
       .map(
         (s) =>
           `<button class="chip" type="button" data-acao="card-status" data-id="${item.id}" data-v="${esc(s.valor)}">${esc(s.curto)}</button>`,
@@ -397,9 +403,15 @@ async function telaTurno() {
 }
 
 async function definirStatusDoCard(id, status) {
+  // Falta dizer quantas passaram: o status só é gravado junto com essa conta, no formulário.
+  if (status === APROVADO_PARCIAL) {
+    statusPedido = { id, status };
+    location.hash = `#/item/${id}`;
+    return;
+  }
   const item = await db.obter('itens', id);
   if (!item) return;
-  await db.gravar('itens', { ...item, status, qtdPendente: null });
+  await db.gravar('itens', { ...item, status, qtdPendente: null, qtdAprovada: null });
   // Lote com várias peças: abre a edição para dizer quantas ficaram pendentes.
   if (status === 'Pendente' && item.qtd > 1) location.hash = `#/item/${id}`;
   else telaTurno();
@@ -418,8 +430,8 @@ async function marcarRevelador(id) {
 
 /* Formulário da inspeção */
 function camposDoForm(f) {
-  const { tipo, penetracao, revelador, reinspecao, hora, peca, qtd, of, status, qtdPendente, obs } = f;
-  return JSON.stringify({ tipo, penetracao, revelador, reinspecao, hora, peca, qtd, of, status, qtdPendente, obs });
+  const { tipo, penetracao, revelador, reinspecao, hora, peca, qtd, of, status, qtdPendente, qtdAprovada, obs } = f;
+  return JSON.stringify({ tipo, penetracao, revelador, reinspecao, hora, peca, qtd, of, status, qtdPendente, qtdAprovada, obs });
 }
 
 function formAlterado() {
@@ -474,6 +486,7 @@ function formParaItem(f) {
     of: f.of.trim().replace(/-$/, ''),
     status: f.status,
     qtdPendente: f.status === 'Pendente' && qtd > 1 ? parseInt(f.qtdPendente, 10) || null : null,
+    qtdAprovada: f.status === APROVADO_PARCIAL && qtd > 1 ? parseInt(f.qtdAprovada, 10) || null : null,
     obs: f.obs.trim(),
   };
 }
@@ -493,24 +506,45 @@ async function aprenderPeca(nome, nomeAnterior) {
   await db.gravarConfig('pecas', catalogo);
 }
 
-function mostrarErroPeca() {
-  const campo = $('f-peca');
-  $('erro-peca').hidden = false;
-  campo.setAttribute('aria-invalid', 'true');
+function mostrarErro(campoId, erroId, mensagem) {
+  if (mensagem) $(erroId).textContent = mensagem;
+  $(erroId).hidden = false;
+  $(campoId).setAttribute('aria-invalid', 'true');
   document.title = `Erro: ${tituloAtual}`;
-  campo.focus();
 }
 
-function limparErroPeca() {
-  $('erro-peca').hidden = true;
-  $('f-peca').removeAttribute('aria-invalid');
-  document.title = tituloAtual;
+function limparErro(campoId, erroId) {
+  $(erroId).hidden = true;
+  $(campoId).removeAttribute('aria-invalid');
+  if (!app.querySelector('[aria-invalid="true"]')) document.title = tituloAtual;
+}
+
+const limparErroPeca = () => limparErro('f-peca', 'erro-peca');
+
+function limparErrosParcial() {
+  limparErro('f-qtd', 'erro-qtd');
+  limparErro('f-qtd-aprovada', 'erro-qtd-aprovada');
+}
+
+// Cada erro no seu campo, com o foco no primeiro (FRM-16).
+function errosDoFormulario(f) {
+  const erros = [];
+  if (!f.peca.trim()) erros.push(['f-peca', 'erro-peca']);
+  if (f.status === APROVADO_PARCIAL) {
+    const qtd = parseInt(f.qtd, 10);
+    const falta = faltaNaAprovacaoParcial(qtd, parseInt(f.qtdAprovada, 10));
+    if (falta === 'qtd') erros.push(['f-qtd', 'erro-qtd']);
+    if (falta === 'aprovadas') erros.push(['f-qtd-aprovada', 'erro-qtd-aprovada', `Informe quantas foram aprovadas, de 1 a ${qtd - 1}.`]);
+  }
+  return erros;
 }
 
 async function salvarFormulario() {
   if (!form) return;
-  if (!form.peca.trim()) {
-    mostrarErroPeca();
+  const erros = errosDoFormulario(form);
+  if (erros.length) {
+    erros.forEach(([campo, erro, mensagem]) => mostrarErro(campo, erro, mensagem));
+    $(erros[0][0]).focus();
     return;
   }
   const f = form;
@@ -572,6 +606,7 @@ function formVazio(turno, anterior) {
     of: '',
     status: '',
     qtdPendente: '',
+    qtdAprovada: '',
     obs: '',
   };
 }
@@ -584,6 +619,7 @@ function itemParaForm(item) {
     horaInicial: item.hora,
     qtd: item.qtd ?? '',
     qtdPendente: item.qtdPendente ?? '',
+    qtdAprovada: item.qtdAprovada ?? '',
     obs: item.obs ?? '',
   };
 }
@@ -642,7 +678,8 @@ function htmlFormulario(f) {
 
         <div class="campo">
           <label class="campo-rotulo" for="f-qtd">Quantidade (opcional)</label>
-          <input class="entrada entrada-curta" id="f-qtd" type="text" inputmode="numeric" value="${esc(f.qtd)}" autocomplete="off" enterkeyhint="next" />
+          <input class="entrada entrada-curta" id="f-qtd" type="text" inputmode="numeric" value="${esc(f.qtd)}" aria-describedby="erro-qtd" autocomplete="off" enterkeyhint="next" />
+          <p class="erro-campo" id="erro-qtd" hidden>Informe o total de peças para aprovar parcialmente.</p>
         </div>
 
         <div class="campo">
@@ -657,6 +694,12 @@ function htmlFormulario(f) {
           <div class="campo" id="campo-qtd-pendente" hidden>
             <label class="campo-rotulo" for="f-qtd-pendente">Quantas ficaram pendentes</label>
             <input class="entrada entrada-curta" id="f-qtd-pendente" type="text" inputmode="numeric" value="${esc(f.qtdPendente)}" autocomplete="off" enterkeyhint="done" />
+          </div>
+          <div class="campo" id="campo-qtd-aprovada" hidden>
+            <label class="campo-rotulo" for="f-qtd-aprovada">Quantas foram aprovadas</label>
+            <input class="entrada entrada-curta" id="f-qtd-aprovada" type="text" inputmode="numeric" value="${esc(f.qtdAprovada)}" aria-describedby="erro-qtd-aprovada nota-aprovadas" autocomplete="off" enterkeyhint="done" />
+            <p class="erro-campo" id="erro-qtd-aprovada" hidden></p>
+            <p class="nota" id="nota-aprovadas"></p>
           </div>
         </fieldset>
 
@@ -734,6 +777,20 @@ function pintarStatus() {
   ).join('');
   $('op-status').innerHTML = opcoes;
   $('campo-qtd-pendente').hidden = !(form.status === 'Pendente' && Number(form.qtd) > 1);
+  $('campo-qtd-aprovada').hidden = form.status !== APROVADO_PARCIAL;
+  $('nota-aprovadas').textContent = Number(form.qtd) > 1 ? `De ${form.qtd} peças. As outras ficam aguardando reparo.` : 'Preencha antes a quantidade total, acima.';
+}
+
+// A conta da aprovação parcial fica escrita nas observações e sai de lá quando o status muda.
+function atualizarObsParcial() {
+  const parcial = form.status === APROVADO_PARCIAL;
+  const frase = fraseAprovacaoParcial(parseInt(form.qtd, 10), parseInt(form.qtdAprovada, 10));
+  // Conta pela metade: espera, sem apagar o que já está escrito.
+  if (parcial && !frase) return;
+  const obs = obsComFrase(form.obs, parcial ? frase : '');
+  if (obs === form.obs) return;
+  form.obs = obs;
+  $('f-obs').value = obs;
 }
 
 async function pintarFotos() {
@@ -759,6 +816,8 @@ async function pintarFotos() {
 
 async function telaFormulario({ id, acao, origemId }) {
   const versao = versaoRota;
+  const pedido = statusPedido?.id === id ? statusPedido : null;
+  statusPedido = null;
   const turno = await turnoAtual();
   const rascunho = lerRascunho();
   let inicial;
@@ -774,6 +833,11 @@ async function telaFormulario({ id, acao, origemId }) {
       return;
     }
     inicial = itemParaForm(item);
+    // Status escolhido no card: o formulário abre com ele marcado e ainda não salvo.
+    if (pedido) {
+      base = camposDoForm(inicial);
+      inicial = { ...inicial, status: pedido.status, qtdAprovada: '' };
+    }
   } else {
     if (!turno) {
       location.replace('#/turno/novo');
@@ -785,7 +849,7 @@ async function telaFormulario({ id, acao, origemId }) {
       const origem = await db.obter('itens', origemId);
       if (origem) {
         const dados = dadosProximaAcao(origem, acao, horaAgora());
-        inicial = { ...inicial, ...dados, horaInicial: dados.hora, qtd: dados.qtd ?? '', qtdPendente: '' };
+        inicial = { ...inicial, ...dados, horaInicial: dados.hora, qtd: dados.qtd ?? '', qtdPendente: '', qtdAprovada: '' };
       }
     }
   }
@@ -806,6 +870,7 @@ async function telaFormulario({ id, acao, origemId }) {
   pintarSugestoesOf();
   pintarStatus();
   pintarFotos();
+  if (pedido) $('f-qtd-aprovada').focus();
 }
 
 function aoDigitar(evento) {
@@ -823,7 +888,14 @@ function aoDigitar(evento) {
   } else if (alvo.id === 'f-qtd') {
     alvo.value = alvo.value.replace(/\D/g, '');
     form.qtd = alvo.value;
+    limparErro('f-qtd', 'erro-qtd');
+    if (form.status === APROVADO_PARCIAL) atualizarObsParcial();
     pintarStatus();
+  } else if (alvo.id === 'f-qtd-aprovada') {
+    alvo.value = alvo.value.replace(/\D/g, '');
+    form.qtdAprovada = alvo.value;
+    limparErro('f-qtd-aprovada', 'erro-qtd-aprovada');
+    atualizarObsParcial();
   } else if (alvo.id === 'f-qtd-pendente') {
     alvo.value = alvo.value.replace(/\D/g, '');
     form.qtdPendente = alvo.value;
@@ -1272,8 +1344,16 @@ const ACOES = {
     salvarRascunho();
   },
   status: (el) => {
+    const anterior = form.status;
     form.status = form.status === el.dataset.v ? '' : el.dataset.v;
+    const parcial = form.status === APROVADO_PARCIAL;
+    if (anterior === APROVADO_PARCIAL || parcial) {
+      atualizarObsParcial();
+      limparErrosParcial();
+    }
     pintarStatus();
+    // A pergunta vem logo: quantas passaram, ou antes o total do lote.
+    if (parcial) $(Number(form.qtd) > 1 ? 'f-qtd-aprovada' : 'f-qtd').focus();
     salvarRascunho();
   },
   'foto-camera': () => pedirFoto(inputCamera, form.id, form.turnoId),

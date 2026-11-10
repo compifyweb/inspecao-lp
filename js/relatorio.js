@@ -1,13 +1,25 @@
 // Regras do relatório. Só funções puras: sem tela e sem banco, para poder testar com node.
 
+export const APROVADO_PARCIAL = 'Aprovado parcialmente';
+
+// Aprovado parcialmente fica laranja: parte do lote ainda espera reparo.
 export const STATUS = [
   { valor: 'Aprovado', curto: 'Aprovado', cor: 'verde', icone: 'check' },
+  { valor: APROVADO_PARCIAL, curto: 'Aprov. parcial', cor: 'laranja', icone: 'check-parcial' },
   { valor: 'Pendente', curto: 'Pendente', cor: 'amarelo', icone: 'relogio' },
   { valor: 'Aguardando reparo', curto: 'Ag. reparo', cor: 'laranja', icone: 'chave' },
 ];
 
 // Status que pedem nova inspeção depois.
-const COM_PROBLEMA = ['Pendente', 'Aguardando reparo'];
+const COM_PROBLEMA = ['Pendente', 'Aguardando reparo', APROVADO_PARCIAL];
+
+// Lote em que só parte das peças passou: quantas não passaram. Zero quando não é esse caso.
+function naoAprovadas(item) {
+  if (!(item.qtd > 1)) return 0;
+  if (item.status === 'Pendente' && item.qtdPendente > 0 && item.qtdPendente < item.qtd) return item.qtdPendente;
+  if (item.status === APROVADO_PARCIAL && item.qtdAprovada > 0 && item.qtdAprovada < item.qtd) return item.qtd - item.qtdAprovada;
+  return 0;
+}
 
 const formatoDia = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' });
 
@@ -46,10 +58,29 @@ export function textoOf(item) {
 
 export function textoStatus(item) {
   if (!item.status) return '';
-  const parcial =
-    item.status === 'Pendente' && item.qtd > 1 && item.qtdPendente > 0 && item.qtdPendente < item.qtd;
-  if (parcial) return item.qtdPendente === 1 ? '1 pendente' : `${item.qtdPendente} pendentes`;
+  if (item.status === 'Pendente' && naoAprovadas(item)) return item.qtdPendente === 1 ? '1 pendente' : `${item.qtdPendente} pendentes`;
   return item.status.toLowerCase();
+}
+
+// "6 aprovados e 2 aguardando reparo." Vazio enquanto a conta não fecha.
+export function fraseAprovacaoParcial(qtd, aprovadas) {
+  if (!(Number.isInteger(qtd) && Number.isInteger(aprovadas) && aprovadas >= 1 && aprovadas < qtd)) return '';
+  return `${aprovadas} ${aprovadas === 1 ? 'aprovado' : 'aprovados'} e ${qtd - aprovadas} aguardando reparo.`;
+}
+
+const FRASE_PARCIAL = /\d+ aprovad[oa]s? e \d+ aguardando reparo\.?/i;
+
+// A frase vai para a primeira linha das observações e substitui a anterior, escrita pelo app ou à mão.
+export function obsComFrase(obs, frase) {
+  const resto = obs.replace(FRASE_PARCIAL, '').trim();
+  return [frase, resto].filter(Boolean).join('\n');
+}
+
+// O que falta para gravar a aprovação parcial: o total do lote ou quantas passaram.
+export function faltaNaAprovacaoParcial(qtd, aprovadas) {
+  if (!(qtd > 1)) return 'qtd';
+  if (!(aprovadas >= 1 && aprovadas < qtd)) return 'aprovadas';
+  return null;
 }
 
 export function linhaItem(item) {
@@ -83,18 +114,17 @@ export function nomeArquivoPdf(turno) {
 export function proximaAcao(item) {
   if (!item.status) return null;
   const problema = COM_PROBLEMA.includes(item.status);
-  const parcial =
-    item.status === 'Pendente' && item.qtd > 1 && item.qtdPendente > 0 && item.qtdPendente < item.qtd;
+  const parcial = naoAprovadas(item) > 0;
   if (item.tipo === 'LP' && (!problema || parcial)) return { acao: 'lpf', rotulo: 'Registrar LPF' };
   if (problema) return { acao: 'reinspecao', rotulo: 'Registrar reinspeção' };
   return null;
 }
 
 export function dadosProximaAcao(item, acao, hora) {
-  const pendentes = Number(item.qtdPendente) || 0;
-  const base = { peca: item.peca, of: item.of, hora, status: '', qtdPendente: null, obs: '' };
+  const pendentes = naoAprovadas(item) || Number(item.qtdPendente) || 0;
+  const base = { peca: item.peca, of: item.of, hora, status: '', qtdPendente: null, qtdAprovada: null, obs: '' };
   if (acao === 'lpf') {
-    // 23 tubos com 1 pendente: o LPF segue com os 22 que passaram.
+    // 23 tubos com 1 pendente: o LPF segue com os 22 que passaram. A reinspeção fica com o que não passou.
     const qtd = item.qtd && pendentes ? item.qtd - pendentes : item.qtd;
     return { ...base, tipo: 'LPF', penetracao: true, revelador: false, reinspecao: false, qtd };
   }
